@@ -397,11 +397,14 @@ void do_no_page(unsigned long error_code,unsigned long address)
 	oom();
 }
 
+// 主内存区初始化(在main()调用)
 void mem_init(long start_mem, long end_mem)
 {
 	int i;
 
-	HIGH_MEMORY = end_mem;
+	HIGH_MEMORY = end_mem; // 设置内存最高端
+	// 将1MB~16MB内所有内存页面对应的内存映射字节数组置为USED
+	// PAGING_PAGES为(PAGING_MEMORY),即1MB~16MB的内存页面数
 	for (i=0 ; i<PAGING_PAGES ; i++)
 		mem_map[i] = USED;
 	i = MAP_NR(start_mem);
