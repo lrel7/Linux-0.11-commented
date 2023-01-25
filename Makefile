@@ -30,20 +30,28 @@ CPP	+= -Iinclude
 #
 ROOT_DEV= #FLOPPY 
 
-ARCHIVES=kernel/kernel.o mm/mm.o fs/fs.o
-DRIVERS =kernel/blk_drv/blk_drv.a kernel/chr_drv/chr_drv.a
-MATH	=kernel/math/math.a
-LIBS	=lib/lib.a
+ARCHIVES=kernel/kernel.o mm/mm.o fs/fs.o # kernel,mm,fs目录的目标代码文件，引用ARCHIVES(归档文件)表示
+DRIVERS =kernel/blk_drv/blk_drv.a kernel/chr_drv/chr_drv.a # 块和字符设备库文件
+MATH	=kernel/math/math.a # 数学运算库文件
+LIBS	=lib/lib.a # 通用库文件
 
-.c.s:
+# make老式的隐式后缀规则
+# 第一条指示make将所有'.c'文件编译生成'.s'文件
+# :下面是规则
+# 表示让gcc采用前面CFLAGS指定的选项，仅使用include/目录下的头文件
+# 适当地编译后不进行汇编就停止(-S)
+.c.s: 
 	@$(CC) $(CFLAGS) -S -o $*.s $<
 .s.o:
 	@$(AS)  -o $*.o $<
 .c.o:
 	@$(CC) $(CFLAGS) -c -o $*.o $<
 
+# all表示创建Makefile所知的最顶层的目标，即Image文件
+# 它引导启动盘映像文件bootimage，将其写入软盘就可以使用该软盘引导Linux系统
 all:	Image	
 
+# 说明Image文件由冒号后面3个文件产生
 Image: boot/bootsect boot/setup tools/system
 	@cp -f tools/system system.tmp
 	@$(STRIP) system.tmp
@@ -53,12 +61,18 @@ Image: boot/bootsect boot/setup tools/system
 	@rm -f tools/kernel
 	@sync
 
+# disk文件由Image文件产生
+# dd-复制文件，bs-一次读/写的字节数，if-输入的文件，of-输出到的文件
+# /dev/fd0是软盘驱动器
 disk: Image
 	@dd bs=8192 if=Image of=/dev/fd0
 
+# 利用上面的.s .o规则生成head.o目标文件
 boot/head.o: boot/head.s
 	@make head.o -C boot/
 
+# system文件由冒号右边的文件生成
+# 最后的>System.map表示gld将连接映像重定向存放在System.map文件中
 tools/system:	boot/head.o init/main.o \
 		$(ARCHIVES) $(DRIVERS) $(MATH) $(LIBS)
 	@$(LD) $(LDFLAGS) boot/head.o init/main.o \
@@ -69,38 +83,56 @@ tools/system:	boot/head.o init/main.o \
 	-o tools/system 
 	@nm tools/system | grep -v '\(compiled\)\|\(\.o$$\)\|\( [aU] \)\|\(\.\.ng$$\)\|\(LASH[RL]DI\)'| sort > System.map 
 
+# 进入kernel/math/目录，运行make工具程序生成数学协处理文件math.a
 kernel/math/math.a:
 	@make -C kernel/math
 
+# 生成块设备库文件blk_drv.a
 kernel/blk_drv/blk_drv.a:
 	@make -C kernel/blk_drv
 
+# 生成字符设备函数文件chr_drv.a
 kernel/chr_drv/chr_drv.a:
 	@make -C kernel/chr_drv
 
+# 内核目标模块
 kernel/kernel.o:
 	@make -C kernel
 
+# 内存管理模块
 mm/mm.o:
 	@make -C mm
 
+# 文件系统目标模块
 fs/fs.o:
 	@make -C fs
 
+# 库函数
 lib/lib.a:
 	@make -C lib
 
+# 使用8086汇编和连接器对setup.s文件编译，生成setup文件
 boot/setup: boot/setup.s
 	@make setup -C boot
 
+# 同上，生成bootsect.o磁盘引导块
 boot/bootsect: boot/bootsect.s
 	@make bootsect -C boot
 
+# 下面4行在bootsect.s文本程序开始处添加一行有关system模块文件长度信息
+# 在把system模块加载到内存期间用于指明系统模块的长度
+# 首先生成只含"SYSSIZE=sistem文件实际长度"一行信息的tmp.s文件
+# ls -l对编译生成的system模块文件进行长列表显示
+# grep命令取得列表中文件字节数字段信息，并定向保存在tmp.s临时文件
+# cut命令剪切字符串，tr命令去除行尾的回车
+# 然后将bootsect.s文件添加到其后(>>重定向)
 tmp.s:	boot/bootsect.s tools/system
 	@(echo -n "SYSSIZE = (";ls -l tools/system | grep system \
 		| cut -c25-31 | tr '\012' ' '; echo "+ 15 ) / 16") > tmp.s
 	@cat boot/bootsect.s >> tmp.s
 
+# 执行make clean时
+# 去除所有编译连接生成的文件
 clean:
 	@rm -f Image System.map tmp_make core boot/bootsect boot/setup
 	@rm -f init/*.o tools/system boot/*.o typescript* info bochsout.txt
@@ -117,10 +149,19 @@ distclean: clean
 	@make clean -C tools/calltree-2.3
 	@make clean -C tools/bochs/bochs-2.3.7
 
+# 先执行上面的clean，然后压缩linux/目录生成backup.Z压缩文件
 backup: clean
 	@(cd .. ; tar cf - linux | compress16 - > backup.Z)
 	@sync
 
+# 生成各文件之间的依赖关系
+# 这样当某个头文件被改动后，make可以通过依赖关系重新编译与其相关的所有.c文件
+# 1. 使用字符串编辑程序sed对Makefile文件处理，输出为删除了Makefile文件中
+# '### Dependencies'开始的倒数7行，并生成一个临时文件tmp_make
+# 2. 对init/目录下的每一个.c文件执行gcc预处理，相应目标文件名加上其依赖关系
+# 同时把预处理结果添加到临时文件tmp_make中
+# 3. 将tmp_make复制生成新的Makefile文件
+# 4. 对fs/目录下的Makefile文件也作同样处理
 dep:
 	@sed '/\#\#\# Dependencies/q' < Makefile > tmp_make
 	@(for i in init/*.c;do echo -n "init/";$(CPP) -M $$i;done) >> tmp_make
