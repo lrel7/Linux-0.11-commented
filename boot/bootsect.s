@@ -5,6 +5,7 @@
 # 0x3000 is 0x30000 bytes = 196kB, more than enough for current
 # versions of linux
 #
+# system模块长度，单位是节（16字节为1节）
 	.equ SYSSIZE, 0x3000
 #
 #	bootsect.s		(C) 1991 Linus Torvalds
@@ -24,20 +25,30 @@
 # read errors will result in a unbreakable loop. Reboot by hand. It
 # loads pretty fast by getting whole sectors at a time whenever possible.
 
+# .global(或.globl)定义随后的标识符是外部的或全局的
 	.global _start, begtext, begdata, begbss, endtext, enddata, endbss
+# .text定义当前代码段
 	.text
 	begtext:
+# .data定义数据段
 	.data
 	begdata:
+# .bss定义未初始化数据
 	.bss
 	begbss:
 	.text
 
+# setup的扇区数
 	.equ SETUPLEN, 4		# nr of setup-sectors
+# bootsect的原始地址
 	.equ BOOTSEG, 0x07c0		# original address of boot-sector
+# bootsect此后将自己移到这里
 	.equ INITSEG, 0x9000		# we move boot here - out of the way
+# setup从这里开始
 	.equ SETUPSEG, 0x9020		# setup starts here
+# system加载到这里
 	.equ SYSSEG, 0x1000		# system loaded at 0x10000 (65536).
+# 停止加载的地址
 	.equ ENDSEG, SYSSEG + SYSSIZE	# where to stop loading
 
 # ROOT_DEV:	0x000 - same type of floppy as boot.
@@ -45,29 +56,50 @@
 #
 ##和源码不同，源码中是0x306 第2块硬盘的第一个分区
 #
+# ROOT_DEV是设备号，指定根文件系统的位置
+# 命名方式：主设备号*256 + 次设备号
+# 主设备号：1-内存 2-磁盘 3-硬盘 4-ttyx 5-并行口 6-非命名管道
+# 0x300-第一个磁盘，0x301-第一个盘的第一个分区，...，0x304-第一给盘的第四个分区
+# 0x305-第二个磁盘，0x306-第二个盘的第一个分区，...
 	.equ ROOT_DEV, 0x301
 	ljmp    $BOOTSEG, $_start
 _start:
-	mov	$BOOTSEG, %ax	#将ds段寄存器设置为0x7C0
+# 将自身从0x07c0移到0x9000
+# 一般来说mov指令格式是mov dst src,但下面好像反过来了
+# 将ds段寄存器设置为0x7C0(BOOTSEG)
+# 8086不允许直接将数据送入段寄存器，因此需要ax寄存器做辅助
+	mov	$BOOTSEG, %ax	# 将0x07c0处的值复制到ax寄存器
+	mov	%ax, %ds		# 将ax寄存器的值复制到ds段寄存器
+#将es段寄存器设置为0x900
+	mov	$INITSEG, %ax	# 将ax寄存器的值(即ds寄存器的值)复制到0x9000处	
+	mov	%ax, %es		# 将ax寄存器的值复制到es段寄存器
+# 设置移动计数值256字
+	mov	$256, %cx		
+# 将si寄存器设为0 源地址ds:si = 0x07C0:0x0000(ds是段地址，si是偏移地址)
+	sub	%si, %si		
+# 将di寄存器设为0 目标地址es:si = 0x9000:0x0000
+	sub	%di, %di		
+# 重复执行并递减cx的值
+	rep					
+# 从内存[si]处移动cx个字到[di]处
+	movsw				
+# 段间跳转，INITSEG指出跳转到的段地址，go是偏移地址
+	ljmp	$INITSEG, $go	
+
+# 此时CPU已移动到0x90000处执行代码
+# 下面设置段寄存器DS,ES,都置成移动后代码所在的段处(0x9000)
+go:	mov	%cs, %ax		
 	mov	%ax, %ds
-	mov	$INITSEG, %ax	#将es段寄存器设置为0x900
 	mov	%ax, %es
-	mov	$256, %cx		#设置移动计数值256字
-	sub	%si, %si		#源地址	ds:si = 0x07C0:0x0000
-	sub	%di, %di		#目标地址 es:si = 0x9000:0x0000
-	rep					#重复执行并递减cx的值
-	movsw				#从内存[si]处移动cx个字到[di]处
-	ljmp	$INITSEG, $go	#段间跳转，这里INITSEG指出跳转到的段地址，解释了cs的值为0x9000
-go:	mov	%cs, %ax		#将ds，es，ss都设置成移动后代码所在的段处(0x9000)
-	mov	%ax, %ds
-	mov	%ax, %es
+# 设置堆栈寄存器SS和SP
 # put stack at 0x9ff00.
 	mov	%ax, %ss
 	mov	$0xFF00, %sp		# arbitrary value >>512
 
 # load the setup-sectors directly after the bootblock.
 # Note that 'es' is already set up.
-
+# 加载setup模块
+# 利用BIOS中断INT 0x13将setup从地盘第二个扇区读到0x90200
 #
 ##ah=0x02 读磁盘扇区到内存	al＝需要独出的扇区数量
 ##ch=磁道(柱面)号的低八位   cl＝开始扇区(位0-5),磁道号高2位(位6－7)
@@ -77,11 +109,12 @@ go:	mov	%cs, %ax		#将ds，es，ss都设置成移动后代码所在的段处(0x9
 load_setup:
 	mov	$0x0000, %dx		# drive 0, head 0
 	mov	$0x0002, %cx		# sector 2, track 0
-	mov	$0x0200, %bx		# address = 512, in INITSEG
+	mov	$0x0200, %bx		# 偏移量 = 512, in INITSEG段(0x9000)
 	.equ    AX, 0x0200+SETUPLEN
 	mov     $AX, %ax		# service 2, nr of sectors
-	int	$0x13			# read it
+	int	$0x13				# read it
 	jnc	ok_load_setup		# ok - continue
+# 出错，复位驱动器并重试
 	mov	$0x0000, %dx
 	mov	$0x0000, %ax		# reset the diskette
 	int	$0x13
@@ -91,35 +124,39 @@ ok_load_setup:
 
 # Get disk drive parameters, specifically nr of sectors/track
 
-	mov	$0x00, %dl
-	mov	$0x0800, %ax		# AH=8 is get drive parameters
+	mov	$0x00, %dl			# dl-驱动器号
+	mov	$0x0800, %ax		# AX=0x0800，则AH=8 is get drive parameters
 	int	$0x13
 	mov	$0x00, %ch
-	#seg cs
+	#seg cs					# 表示下一条语句的操作数在cs段寄存器所指的段中(但本程序代码和数据都在同一个段内，所以这条指令不需要)
 	mov	%cx, %cs:sectors+0	# %cs means sectors is in %cs
-	mov	$INITSEG, %ax
+	mov	$INITSEG, %ax		# 上面取磁盘参数中断改掉了es的值，这里重新设置
 	mov	%ax, %es
 
 # Print some inane message
-
-	mov	$0x03, %ah		# read cursor pos
-	xor	%bh, %bh
-	int	$0x10
+# 显示信息："'Loading system...'回车换行"
+# BIOS中断0x10
+# 功能号：ax 输入：bx-页号
+# 返回：ch-扫描开始线 cl-扫描结束线 dh-行号 dl-列号
+	mov	$0x03, %ah			# 中断功能号0x03,读光标位置,返回在dx(dh+dl)中，供显示串用
+	xor	%bh, %bh			# 输入：页号
+	int	$0x10				
 	
-	mov	$30, %cx
+	mov	$30, %cx			# 共显示24个字符(这个30是八进制吗)
 	mov	$0x0007, %bx		# page 0, attribute 7 (normal)
 	#lea	msg1, %bp
-	mov     $msg1, %bp
-	mov	$0x1301, %ax		# write string, move cursor
+	mov     $msg1, %bp 		# es:bp指向要显示的字符串(msg1定义在末尾)
+	mov	$0x1301, %ax		# 中断功能号0x13,显示字符串; al=0x01表示使用bl中的属性值(光标停在字符串结尾处)
 	int	$0x10
 
 # ok, we've written the message, now
 # we want to load the system (at 0x10000)
+# 现在将system模块加载到0x10000处
 
-	mov	$SYSSEG, %ax
+	mov	$SYSSEG, %ax	# 将es设置为system的段地址(0x10000)
 	mov	%ax, %es		# segment of 0x010000
-	call	read_it
-	call	kill_motor
+	call	read_it		# 读取磁盘上的system模块(es作为输入参数)
+	call	kill_motor  # 关闭驱动器马达，得知驱动器状态
 
 # After that we check which root-device to use. If the device is
 # defined (#= 0), nothing is done and the given device is used.
