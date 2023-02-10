@@ -203,8 +203,9 @@ void trap_init(void)
 	// 17~47的trap门设置为reserved
 	for (i=17;i<48;i++)
 		set_trap_gate(i,&reserved);
+	// 设置协处理器中断0x2d(45)陷阱门描述符,允许其产生中断请求
 	set_trap_gate(45,&irq13);
-	outb_p(inb_p(0x21)&0xfb,0x21);
-	outb(inb_p(0xA1)&0xdf,0xA1);
-	set_trap_gate(39,&parallel_interrupt);
+	outb_p(inb_p(0x21)&0xfb,0x21); // 允许8257A主芯片的IRQ2中断请求
+	outb(inb_p(0xA1)&0xdf,0xA1); // 允许8259A从芯片的IRQ13中断请求
+	set_trap_gate(39,&parallel_interrupt); // 设置并行口1的中断0x27陷阱门描述符
 }

@@ -142,18 +142,19 @@ void main(void)		/* This really IS void, no error here. */
 #endif
 	mem_init(main_memory_start,memory_end); // 主内存初始化
 	trap_init(); // trap初始化
-	blk_dev_init();
-	chr_dev_init();
-	tty_init();
-	time_init();
-	sched_init();
-	buffer_init(buffer_memory_end);
-	hd_init();
-	floppy_init();
-	sti();
+	blk_dev_init(); // 块设备初始化
+	chr_dev_init(); // 字符设备初始化
+	tty_init(); // tty初始化
+	time_init(); // 设置开机启动时间
+	sched_init(); // 调度程序初始化
+	buffer_init(buffer_memory_end); // 缓冲管理初始化
+	hd_init(); // 硬盘初始化
+	floppy_init(); // 软驱初始化
+	sti(); // 初始化已结束，开启中断
+// 利用中断返回指令，返回用户模式下执行(任务0)
 	move_to_user_mode();
 	if (!fork()) {		/* we count on this going ok */
-		init();
+		init(); // 在新建的子进程(任务1)中执行init()，其定义见后
 	}
 /*
  *   NOTE!!   For any other task 'pause()' would mean we have to get a
@@ -162,59 +163,75 @@ void main(void)		/* This really IS void, no error here. */
  * can run). For task0 'pause()' just means we go check if some other
  * task can run, and if not we return here.
  */
+// pause()系统调用把任务0转换成可中断等待状态，再执行调度函数
 	for(;;) pause();
 }
 
+// 产生格式化信息并输出到标准输出设备stdout(1)
+// *fmt指定输出将采用的格式
 static int printf(const char *fmt, ...)
 {
 	va_list args;
 	int i;
 
 	va_start(args, fmt);
+	// 使用vsprintf()将格式化的字符串放入printbuf缓冲区
+	// 再用write()将缓冲区内容输出到stdout(1)
 	write(1,printbuf,i=vsprintf(printbuf, fmt, args));
 	va_end(args);
 	return i;
 }
 
+// 读取并执行/etc/rc文件时要用的命令行参数 & 环境参数
 static char * argv_rc[] = { "/bin/sh", NULL };
 static char * envp_rc[] = { "HOME=/", NULL };
 
+// 运行登录shell时要用到的命令行参数 & 环境参数
 static char * argv[] = { "-/bin/sh",NULL };
 static char * envp[] = { "HOME=/usr/root", NULL };
 
+// main()中已完成系统初始化,init()运行在任务0第一次创建的子进程(任务1)中
+// 如果一个进程的父进程先终止了，它的父进程会被设为这里的init进程（任务1）
+// 由init进程负责释放任务数据结构等资源
 void init(void)
 {
 	int pid,i;
 
-	setup((void *) &drive_info);
-	(void) open("/dev/tty0",O_RDWR,0);
-	(void) dup(0);
-	(void) dup(0);
+	setup((void *) &drive_info); // 读取硬盘参数并加载虚拟盘（如果有），安装根文件系统设备
+	(void) open("/dev/tty0",O_RDWR,0); // 打开设备/dev/tty0，对应终端控制台(第一次打开文件，所以fd是0)
+	(void) dup(0); // 复制句柄，产生句柄1号（stdout）
+	(void) dup(0); // 复制句柄，产生句柄2号（stderr）
+	// 打印缓冲区块数(每块1024字节)和总字节数
 	printf("%d buffers = %d bytes buffer space\n\r",NR_BUFFERS,
 		NR_BUFFERS*BLOCK_SIZE);
+	// 打印主内存区空闲字节数
 	printf("Free mem: %d bytes\n\r",memory_end-main_memory_start);
-	if (!(pid=fork())) {
-		close(0);
-		if (open("/etc/rc",O_RDONLY,0))
+	// 创建子进程（任务2）
+	if (!(pid=fork())) { // fork()=0，子进程
+		close(0); // 关闭stdin
+		if (open("/etc/rc",O_RDONLY,0)) // 以只读方式打开/etc/rc文件
 			_exit(1);
-		execve("/bin/sh",argv_rc,envp_rc);
+		execve("/bin/sh",argv_rc,envp_rc); // 执行/bin/sh（shell程序）
 		_exit(2);
 	}
-	if (pid>0)
+	if (pid>0) // 父进程
+		// wait()等待子进程停止或终止，返回值应是子进程的进程号
+		// &i存放返回状态信息
 		while (pid != wait(&i))
 			/* nothing */;
+	// 执行到这里说明上面的子进程停止或终止了，下面循环再创建一个子进程
 	while (1) {
-		if ((pid=fork())<0) {
+		if ((pid=fork())<0) { // 创建失败
 			printf("Fork failed in init\r\n");
 			continue;
 		}
-		if (!pid) {
-			close(0);close(1);close(2);
-			setsid();
-			(void) open("/dev/tty0",O_RDWR,0);
-			(void) dup(0);
-			(void) dup(0);
-			_exit(execve("/bin/sh",argv,envp));
+		if (!pid) { // 子进程
+			close(0);close(1);close(2); // 关闭以前遗留的句柄stdin, stdout, stderr
+			setsid(); // 创建新会话
+			(void) open("/dev/tty0",O_RDWR,0); // 重新打开/dev/tty0作为stdin
+			(void) dup(0); // 复制成stdout
+			(void) dup(0); // 复制成stderr
+			_exit(execve("/bin/sh",argv,envp)); // 执行shell，但参数改了
 		}
 		while (1)
 			if (pid == wait(&i))

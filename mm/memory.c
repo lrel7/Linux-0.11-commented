@@ -414,6 +414,7 @@ void mem_init(long start_mem, long end_mem)
 		mem_map[i++]=0;
 }
 
+
 void calc_mem(void)
 {
 	int i,j,k,free=0;

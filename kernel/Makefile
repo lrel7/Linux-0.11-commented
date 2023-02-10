@@ -18,11 +18,12 @@ LDFLAGS	+= -r
 # compling procedure of it, it's not good too. for playing with linux-0.11, we
 # just have fun, have no much concerning about the performance.
 
-CFLAGS	+= -I../include
+CFLAGS	+= -I../include # C编译程序选项
 
-CPP	+= -I../include
+CPP	+= -I../include # C前处理选项
 
-.c.s:
+# 下面的规则指示make利用下面的命令编译
+.c.s: # 采用CFLAGS指定的选项编译后，不进行汇编就停止
 	@$(CC) $(CFLAGS) \
 	-S -o $*.s $<
 .s.o:
@@ -35,15 +36,18 @@ OBJS  = sched.o system_call.o traps.o asm.o fork.o \
 	panic.o printk.o vsprintf.o sys.o exit.o \
 	signal.o mktime.o who.o
 
+# 连接成目标kernel.o
 kernel.o: $(OBJS)
 	@$(LD) $(LDFLAGS) -o kernel.o $(OBJS)
 	@sync
 
+# 清理
 clean:
 	@rm -f core *.o *.a tmp_make keyboard.s
 	@for i in *.c;do rm -f `basename $$i .c`.s;done
 	@for i in chr_drv blk_drv math; do make clean -C $$i; done
 
+# 检查各文件之间的依赖关系
 dep:
 	@sed '/\#\#\# Dependencies/q' < Makefile > tmp_make
 	@(for i in *.c;do echo -n `echo $$i | sed 's,\.c,\.s,'`" "; \

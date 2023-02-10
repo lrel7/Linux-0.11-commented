@@ -345,6 +345,7 @@ void do_tty_interrupt(int tty)
 	copy_to_cooked(tty_table+tty);
 }
 
+// 字符设备初始化，空，为以后扩展准备
 void chr_dev_init(void)
 {
 }
